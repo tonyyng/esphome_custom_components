@@ -3,7 +3,6 @@
 #include "esp32_camera.h"
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
-#include "esphome/core/application.h"
 
 #include <freertos/task.h>
 
@@ -38,7 +37,7 @@ void ESP32Camera::setup() {
                           "framebuffer_task",  // name
                           1024,                // stack size
                           nullptr,             // task pv params
-                          1,                   // priority
+                          0,                   // priority
                           nullptr,             // handle
                           1                    // core
   );
@@ -55,7 +54,11 @@ void ESP32Camera::dump_config() {
   ESP_LOGCONFIG(TAG, "  HREF Pin: %d", conf.pin_href);
   ESP_LOGCONFIG(TAG, "  Pixel Clock Pin: %d", conf.pin_pclk);
   ESP_LOGCONFIG(TAG, "  External Clock: Pin:%d Frequency:%u", conf.pin_xclk, conf.xclk_freq_hz);
+#ifdef USE_ESP_IDF  // Temporary until the espressif/esp32-camera library is updated
+  ESP_LOGCONFIG(TAG, "  I2C Pins: SDA:%d SCL:%d", conf.pin_sscb_sda, conf.pin_sscb_scl);
+#else
   ESP_LOGCONFIG(TAG, "  I2C Pins: SDA:%d SCL:%d", conf.pin_sccb_sda, conf.pin_sccb_scl);
+#endif
   ESP_LOGCONFIG(TAG, "  Reset Pin: %d", conf.pin_reset);
   switch (this->config_.frame_size) {
     case FRAMESIZE_QQVGA:
@@ -124,7 +127,7 @@ void ESP32Camera::dump_config() {
   sensor_t *s = esp_camera_sensor_get();
   auto st = s->status;
   ESP_LOGCONFIG(TAG, "  JPEG Quality: %u", st.quality);
-  ESP_LOGCONFIG(TAG, "  Framebuffer Count: %u", conf.fb_count);
+  // ESP_LOGCONFIG(TAG, "  Framebuffer Count: %u", conf.fb_count);
   ESP_LOGCONFIG(TAG, "  Contrast: %d", st.contrast);
   ESP_LOGCONFIG(TAG, "  Brightness: %d", st.brightness);
   ESP_LOGCONFIG(TAG, "  Saturation: %d", st.saturation);
@@ -159,7 +162,7 @@ void ESP32Camera::loop() {
   }
 
   // request idle image every idle_update_interval
-  const uint32_t now = App.get_loop_component_start_time();
+  const uint32_t now = millis();
   if (this->idle_update_interval_ != 0 && now - this->last_idle_request_ > this->idle_update_interval_) {
     this->last_idle_request_ = now;
     this->request_image(IDLE);
@@ -209,7 +212,6 @@ ESP32Camera::ESP32Camera() {
   this->config_.frame_size = FRAMESIZE_VGA;  // 640x480
   this->config_.jpeg_quality = 10;
   this->config_.fb_count = 1;
-  this->config_.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   this->config_.fb_location = CAMERA_FB_IN_DRAM;
 
   global_esp32_camera = this;
@@ -235,8 +237,13 @@ void ESP32Camera::set_external_clock(uint8_t pin, uint32_t frequency) {
   this->config_.xclk_freq_hz = frequency;
 }
 void ESP32Camera::set_i2c_pins(uint8_t sda, uint8_t scl) {
+#ifdef USE_ESP_IDF  // Temporary until the espressif/esp32-camera library is updated
+  this->config_.pin_sscb_sda = sda;
+  this->config_.pin_sscb_scl = scl;
+#else
   this->config_.pin_sccb_sda = sda;
   this->config_.pin_sccb_scl = scl;
+#endif
 }
 void ESP32Camera::set_reset_pin(uint8_t pin) { this->config_.pin_reset = pin; }
 void ESP32Camera::set_power_down_pin(uint8_t pin) { this->config_.pin_pwdn = pin; }
@@ -327,16 +334,10 @@ void ESP32Camera::set_max_update_interval(uint32_t max_update_interval) {
 void ESP32Camera::set_idle_update_interval(uint32_t idle_update_interval) {
   this->idle_update_interval_ = idle_update_interval;
 }
-/* set frame buffer parameters */
-void ESP32Camera::set_frame_buffer_mode(camera_grab_mode_t mode) { this->config_.grab_mode = mode; }
-void ESP32Camera::set_frame_buffer_count(uint8_t fb_count) {
-  this->config_.fb_count = fb_count;
-  this->set_frame_buffer_mode(fb_count > 1 ? CAMERA_GRAB_LATEST : CAMERA_GRAB_WHEN_EMPTY);
-}
 
 /* ---------------- public API (specific) ---------------- */
-void ESP32Camera::add_image_callback(std::function<void(std::shared_ptr<CameraImage>)> &&callback) {
-  this->new_image_callback_.add(std::move(callback));
+void ESP32Camera::add_image_callback(std::function<void(std::shared_ptr<CameraImage>)> &&f) {
+  this->new_image_callback_.add(std::move(f));
 }
 void ESP32Camera::add_stream_start_callback(std::function<void()> &&callback) {
   this->stream_start_callback_.add(std::move(callback));
